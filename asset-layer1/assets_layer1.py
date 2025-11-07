@@ -5,6 +5,7 @@ import requests
 from bitcoinutils.setup import setup
 from dotenv import load_dotenv
 from bitcoinutils.keys import PrivateKey, P2trAddress
+from bitcoinutils.utils import ControlBlock
 from bitcoinutils.script import Script
 from bitcoinutils.transactions import Transaction, TxInput, TxOutput, TxWitnessInput
 
@@ -13,7 +14,7 @@ from bitcoinutils.transactions import Transaction, TxInput, TxOutput, TxWitnessI
 setup("testnet")
 load_dotenv()
 MEMPOOL_API_URL = "https://mempool.space/testnet/api/"
-FEE= 100 # Satoshis
+FEE= 51# Satoshis
 DUST_LIMIT=300  # Satoshis
 
 
@@ -106,8 +107,98 @@ def receiver_address(asset_id):
         print(f"Error creating address: {e}")
         return None
 
-# Create transactions 
-def create_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_private_key:PrivateKey):
+# Create Taproot Script Path
+def generate_taproot_scripts(receiver_pubkey):
+    try:
+        # Receiver's key spend
+        receiver_script = Script([receiver_pubkey.to_x_only_hex(), 'OP_CHECKSIG'])
+
+        # Secret image spend
+        secret = "Santoshi Nokomata".encode()
+        secret_hash = hashlib.sha256(secret).hexdigest()
+        secret_script = Script(["OP_SHA256", secret_hash, "OP_EQUALVERIFY", "OP_TRUE"])
+
+        return [receiver_script, secret_script]
+    except Exception as e:
+        print(f"Error generating scripts: {e}")
+        return []
+    
+# Script Path Spend
+def create_script_path_transaction(utxos, receiver_add_str, amount, sender_addr_obj, scripts, sender_pubkey):
+    try:
+        total = 0
+        tx_ins = []
+        values = []
+
+        for utxo in utxos:
+            txin = TxInput(utxo['txid'], utxo['vout'])
+            tx_ins.append(txin)
+            total += utxo['value']
+            values.append(utxo['value'])
+            if total >= amount + FEE:
+                break
+
+        if total < amount + FEE:
+            raise ValueError("Insufficient funds")
+
+        tx_outs = [TxOutput(amount, P2trAddress(receiver_add_str).to_script_pub_key())]
+
+        tx = Transaction(tx_ins, tx_outs, has_segwit=True)
+        print(f"Created TX: {tx}")
+
+        # Select script 
+        print("1. Receiver Key Spend")
+        print("2. Secret Image Spend")
+
+        choice = input("Select script to spend: ").strip() 
+        if choice == "1":
+            script_idx = 0
+        elif choice == "2":
+            script_idx = 1
+        else:
+            raise ValueError("Invalid choice")
+
+        selected_script = scripts[script_idx]
+
+        # Control Block
+        cb = ControlBlock(
+            sender_pubkey,
+            scripts,
+            script_idx,
+            is_odd=sender_addr_obj.is_odd()
+        )
+
+        # Create script pubkeys list for all inputs
+        script_pubkeys = [sender_addr_obj.to_script_pub_key() for _ in range(len(tx_ins))]
+
+        # Sign all inputs using script path
+        for i in range(len(tx_ins)):
+            if script_idx == 0:  # Receiver key
+                sig = receiver_private_key.sign_taproot_input(
+                    tx, i,
+                    script_pubkeys,
+                    amounts=values,
+                    script_path=True,
+                    tapleaf_script=selected_script, 
+                    tweak=False
+                )
+                tx.witnesses.append(TxWitnessInput([sig, selected_script.to_hex(), cb.to_hex()]))
+            else:  # Secret image (Santoshi Nokomata)
+                keyword = input(f"Enter secret keyword for input {i}: ").strip().encode()
+                tx.witnesses.append(TxWitnessInput([keyword.hex(), selected_script.to_hex(), cb.to_hex()]))
+
+        print(f"Signed TX: {tx.serialize()}")
+        broadcast(tx.serialize())
+        return tx
+    except Exception as e:
+        print(f"Error in script-path spend: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+
+# Create Key Path transactions 
+def create_key_path_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_private_key:PrivateKey):
     """
     Creates a transaction from the given UTXOs, receiver address, amount, sender address, and sender private key.
 
@@ -138,6 +229,7 @@ def create_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_
     try:
         tx_ins = []
         values = []
+        total = 0
         # Create inputs
         for utxo in utxos:
             txin = TxInput(utxo['txid'], utxo['vout'])
@@ -159,12 +251,13 @@ def create_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_
         tx = Transaction(tx_ins, tx_outs, has_segwit=True)
 
         # Sign inputs
-        sig = sender_private_key.sign_taproot_input(
-            tx, 0,
-            utxo_scripts=[P2trAddress(sender_add_str).to_script_pub_key()],
-            amounts=values,
-        )
-        tx.witnesses.append(TxWitnessInput([sig]))
+        for i in range(len(tx_ins)):
+            sig = sender_private_key.sign_taproot_input(
+                tx, 0,
+                utxo_scripts=[P2trAddress(sender_add_str).to_script_pub_key()],
+                amounts=values,
+            )
+            tx.witnesses.append(TxWitnessInput([sig]))
 
         print(f"Signed TX: {tx.serialize()}")
         broadcast(tx.serialize())
@@ -269,12 +362,22 @@ def main():
     print(f"Receiver Taproot Address: {receiver_add_str}")
     print("===============================")
     
+    # Generate Taproot Scripts
+    scripts = generate_taproot_scripts(receiver_pubkey)
+
     # Create transaction
     amount = int(input("Enter amount in sats to send: "))
-    create_transaction(utxos, receiver_add_str, amount, sender_add_str, sender_private_key)
-    
 
-    
+    print("1. Create Key Path Transaction")
+    print("2. Create Script Path Transaction")
+    path = input("Select path (key/script): ").strip().lower()
+
+    if path == "1":
+        create_key_path_transaction(utxos, receiver_add_str, amount, sender_add_str, sender_private_key)
+    elif path == "2":
+        create_script_path_transaction(utxos, receiver_add_str, amount, sender_addr_obj, scripts, sender_pubkey)
+    else:
+        print("Invalid path selected.")
 if __name__ == "__main__":
     main()
 
