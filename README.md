@@ -16,6 +16,7 @@ The system implements a simple asset transfer protocol where:
 - ✅ Asset ID generation from metadata
 - ✅ Asset commitment embedding in addresses
 - ✅ Normal Taproot key-path transactions
+- ✅ Script-path spending with two tapleaf scripts: a receiver-key `OP_CHECKSIG` leaf and a SHA-256 hash-preimage (secret keyword) leaf
 - ✅ UTXO fetching from Mempool.space API
 - ✅ Transaction broadcasting to Bitcoin testnet
 
@@ -96,6 +97,8 @@ Once funded, run the script again to:
 python assets_layer1.py
 ```
 
+The script asks for the amount in sats, then for the spend path: enter `1` for a key-path spend or `2` for a script-path spend. For a script-path spend it then asks which leaf to use (`1` receiver key, `2` secret keyword) and, for the secret leaf, the keyword for each input.
+
 ## How It Works
 
 ### 1. Asset ID Generation
@@ -119,8 +122,9 @@ The Asset ID is created by hashing:
 def receiver_address(asset_id):
     priv_asset_key = PrivateKey(b=asset_id)
     pub_asset_key = priv_asset_key.get_public_key()
-    tr_asset_script = Script([pub_asset_key.to_x_only_hex(), 'OP_CHECKSIG'])
-    receiver_add_obj = pub_asset_key.get_taproot_address([tr_asset_script])
+    tr_asset_script = Script([pub_asset_key.to_x_only_hex(), 'OP_1'])
+    receiver_add_obj = pub_asset_key.get_taproot_address(tr_asset_script)
+    receiver_add_str = receiver_add_obj.to_string()
     return receiver_add_obj, receiver_add_str
 ```
 
@@ -135,9 +139,9 @@ The receiver derives a Taproot address by:
 
 ```
 1. Fetch UTXOs from sender's address
-2. Create transaction inputs (UTXOs)
-3. Create outputs (receiver + change)
-4. Sign with Taproot key-path spend
+2. Create transaction inputs (UTXOs) until they cover amount + fee
+3. Create a single output to the receiver (no change output)
+4. Sign with a Taproot key-path or script-path spend
 5. Broadcast to Bitcoin network
 ```
 
@@ -145,31 +149,33 @@ The receiver derives a Taproot address by:
 
 ### Main Functions
 
-| Function               | Description                                       |
-| ---------------------- | ------------------------------------------------- |
-| `sender_address()`     | Generate sender's Taproot address                 |
-| `generate_asset_id()`  | Create unique asset identifier                    |
-| `receiver_address()`   | Generate receiver's Taproot address from Asset ID |
-| `create_transaction()` | Build unsigned transaction                        |
-| `fetch_utxos()`        | Get UTXOs from Mempool API                        |
-| `broadcast()`          | Send transaction to network                       |
+| Function                           | Description                                              |
+| ---------------------------------- | -------------------------------------------------------- |
+| `sender_address()`                 | Generate sender's Taproot address                        |
+| `generate_asset_id()`              | Create unique asset identifier                           |
+| `receiver_address()`               | Generate receiver's Taproot address from Asset ID        |
+| `generate_taproot_scripts()`       | Build the receiver-key and hash-preimage tapleaf scripts |
+| `create_key_path_transaction()`    | Build, sign (key path) and broadcast the transfer        |
+| `create_script_path_transaction()` | Build, sign (script path) and broadcast the transfer     |
+| `fetch_utxos()`                    | Get UTXOs from Mempool API                               |
+| `broadcast()`                      | Send transaction to network                              |
 
 ### Configuration
 
 ```python
-MEMPOOL_API_URL = "https://mempool.space/testnet/api"
-FEE = 200           # Satoshis (transaction fee)
-DUST_LIMIT = 300    # Minimum UTXO value
+MEMPOOL_API_URL = "https://mempool.space/testnet/api/"
+FEE = 51            # Satoshis (transaction fee)
+DUST_LIMIT = 300    # Satoshis (defined, not currently enforced)
 ```
 
 ## Transaction Example
 
 ```
-Input:  Sender's Taproot address (funded UTXO)
-Output:
-  - Receiver's Taproot address (400 sats)
-  - Change back to sender (remaining balance - fee)
-Fee:    200 satoshis
+Input:  Sender's Taproot address (funded UTXO, at least amount + 51 sats)
+Output: Receiver's Taproot address
+          - key path:    amount - 51 sats
+          - script path: amount
+Fee:    everything not sent to the receiver (no change output is created)
 ```
 
 ## Security Notes
@@ -199,8 +205,8 @@ Fee:    200 satoshis
 
 ### "Insufficient funds"
 
-- Ensure UTXO value > amount + fee + dust limit
-- Default: 400 + 200 + 300 = 900 satoshis minimum
+- Ensure the UTXO value is at least amount + fee
+- Example: 400 + 51 = 451 satoshis minimum
 
 ### "Broadcast error"
 
@@ -230,12 +236,12 @@ asset_id = SHA256(asset_metadata|genesis_outpoint|asset_tag)
 2. **Off-chain Validation**: Receiver must verify asset metadata separately
 3. **Single Asset Type**: Only supports one asset per transaction
 4. **No SPV Proofs**: Trust in full node or API provider required
+5. **Script-path spends**: the sender address is generated without a script tree, so script-path spends from it do not match its output key and are rejected by the network. Key-path spends work as-is.
 
 ## Future Enhancements
 
 - [ ] Multi-asset transfers
 - [ ] Asset registry integration
-- [ ] Script-path spending for complex conditions
 - [ ] Merkle tree commitments for multiple assets
 - [ ] Client-side validation framework
 
