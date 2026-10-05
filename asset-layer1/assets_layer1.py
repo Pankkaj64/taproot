@@ -29,14 +29,17 @@ receiver_pubkey = receiver_private_key.get_public_key()
 print(f"Receiver Public Key: {receiver_pubkey.to_hex()}")
 
 # sender address Generation Function
-def sender_address(sender_pubkey):
+def sender_address(sender_pubkey, scripts):
     """
-    Generates the sender Taproot address from the given public key.
+    Generates the sender Taproot address from the given public key, committing
+    to the given script tree so it can be spent by key path or script path.
 
     Parameters
     ----------
     sender_pubkey : PublicKey
         The public key of the sender.
+    scripts : list
+        The tapleaf scripts committed to by the address.
 
     Returns
     -------
@@ -46,7 +49,7 @@ def sender_address(sender_pubkey):
         The sender Taproot address string.
     """
     try:
-        sender_addr_obj = sender_pubkey.get_taproot_address()
+        sender_addr_obj = sender_pubkey.get_taproot_address(scripts)
         sender_addr_str = sender_addr_obj.to_string()
         return sender_addr_obj, sender_addr_str
     except Exception as e:
@@ -198,7 +201,7 @@ def create_script_path_transaction(utxos, receiver_add_str, amount, sender_addr_
 
 
 # Create Key Path transactions 
-def create_key_path_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_private_key:PrivateKey):
+def create_key_path_transaction(utxos, receiver_addr_str, amount, sender_add_str, sender_private_key:PrivateKey, scripts):
     """
     Creates a transaction from the given UTXOs, receiver address, amount, sender address, and sender private key.
 
@@ -212,7 +215,10 @@ def create_key_path_transaction(utxos, receiver_addr_str, amount, sender_add_str
         The amount of sats to be transferred.
     sender_add_str : str
         The Taproot address of the sender.
+    sender_private_key : PrivateKey
         The private key of the sender.
+    scripts : list
+        The tapleaf scripts committed to by the sender address (used to tweak the key).
 
     Returns
     -------
@@ -250,12 +256,16 @@ def create_key_path_transaction(utxos, receiver_addr_str, amount, sender_add_str
         # Create transaction
         tx = Transaction(tx_ins, tx_outs, has_segwit=True)
 
+        # Every input spends from the sender address
+        script_pubkeys = [P2trAddress(sender_add_str).to_script_pub_key() for _ in range(len(tx_ins))]
+
         # Sign inputs
         for i in range(len(tx_ins)):
             sig = sender_private_key.sign_taproot_input(
-                tx, 0,
-                utxo_scripts=[P2trAddress(sender_add_str).to_script_pub_key()],
+                tx, i,
+                utxo_scripts=script_pubkeys,
                 amounts=values,
+                tapleaf_scripts=scripts,
             )
             tx.witnesses.append(TxWitnessInput([sig]))
 
@@ -341,9 +351,11 @@ def main():
     print("\n===============================")
     print("Taproot Asset Transfer over the bitcoin layer 1")
 
-    
-    # Generate sender Taproot address
-    sender_addr_obj, sender_add_str = sender_address(sender_pubkey)
+    # Generate Taproot Scripts
+    scripts = generate_taproot_scripts(receiver_pubkey)
+
+    # Generate sender Taproot address (commits to the script tree)
+    sender_addr_obj, sender_add_str = sender_address(sender_pubkey, scripts)
     print(f"Sender Taproot Address: {sender_add_str}")
 
     # Fetch UTXOs for the generated Taproot address
@@ -361,9 +373,6 @@ def main():
     receiver_add_obj, receiver_add_str = receiver_address(asset_id)
     print(f"Receiver Taproot Address: {receiver_add_str}")
     print("===============================")
-    
-    # Generate Taproot Scripts
-    scripts = generate_taproot_scripts(receiver_pubkey)
 
     # Create transaction
     amount = int(input("Enter amount in sats to send: "))
@@ -373,7 +382,7 @@ def main():
     path = input("Select path (key/script): ").strip().lower()
 
     if path == "1":
-        create_key_path_transaction(utxos, receiver_add_str, amount, sender_add_str, sender_private_key)
+        create_key_path_transaction(utxos, receiver_add_str, amount, sender_add_str, sender_private_key, scripts)
     elif path == "2":
         create_script_path_transaction(utxos, receiver_add_str, amount, sender_addr_obj, scripts, sender_pubkey)
     else:
