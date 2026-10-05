@@ -15,7 +15,8 @@ The system implements a simple asset transfer protocol where:
 - ✅ Taproot address generation (BIP-341)
 - ✅ Asset ID generation from metadata
 - ✅ Asset commitment embedding in addresses
-- ✅ Normal Taproot key-path transactions
+- ✅ Sender Taproot address that commits to a two-leaf script tree, so it can be spent by key path or script path
+- ✅ Taproot key-path transactions (key tweaked with the script tree, one signature per input)
 - ✅ Script-path spending with two tapleaf scripts: a receiver-key `OP_CHECKSIG` leaf and a SHA-256 hash-preimage (secret keyword) leaf
 - ✅ UTXO fetching from Mempool.space API
 - ✅ Transaction broadcasting to Bitcoin testnet
@@ -81,6 +82,8 @@ python assets_layer1.py
 ```
 
 Copy the sender address and fund it with testnet BTC:
+
+> **Note:** the sender address now commits to the script tree, so it differs from the address printed by earlier versions of this script. Coins sent to an old address can only be spent with the old code (commit `e4fde45`); move them before switching, or fund the new address.
 
 - Testnet Faucet: https://coinfaucet.eu/en/btc-testnet/
 
@@ -151,7 +154,7 @@ The receiver derives a Taproot address by:
 
 | Function                           | Description                                              |
 | ---------------------------------- | -------------------------------------------------------- |
-| `sender_address()`                 | Generate sender's Taproot address                        |
+| `sender_address()`                 | Generate sender's Taproot address over the scripts       |
 | `generate_asset_id()`              | Create unique asset identifier                           |
 | `receiver_address()`               | Generate receiver's Taproot address from Asset ID        |
 | `generate_taproot_scripts()`       | Build the receiver-key and hash-preimage tapleaf scripts |
@@ -236,7 +239,6 @@ asset_id = SHA256(asset_metadata|genesis_outpoint|asset_tag)
 2. **Off-chain Validation**: Receiver must verify asset metadata separately
 3. **Single Asset Type**: Only supports one asset per transaction
 4. **No SPV Proofs**: Trust in full node or API provider required
-5. **Script-path spends**: the sender address is generated without a script tree, so script-path spends from it do not match its output key and are rejected by the network. Key-path spends work as-is.
 
 ## Future Enhancements
 
