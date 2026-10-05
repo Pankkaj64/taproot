@@ -30,28 +30,29 @@ The system implements a simple asset transfer protocol where:
 1. Clone the repository:
 
 ```bash
-cd "taproot assets Layer 1/asset-layer1"
+git clone https://github.com/Pankkaj64/taproot.git
+cd taproot/asset-layer1
 ```
 
 2. Install dependencies:
 
 ```bash
-pip install python-bitcoinutils python-dotenv requests bitcoinlib
+pip install bitcoin-utils python-dotenv requests bitcoinlib
 ```
 
-3. Generate keys:
+3. Generate a sender and a receiver testnet key (printed in WIF format):
 
 ```bash
 python generate_keys.py
 ```
 
-4. Create `.env` file:
+4. Create your `.env` file from the template:
 
 ```bash
-touch .env
+cp .env.example .env
 ```
 
-5. Add your keys to `.env`:
+5. Paste the two keys printed in step 3 into `.env`:
 
 ```env
 SENDER_PRIVATE_KEY_WIF=your_sender_private_key_wif
@@ -64,8 +65,8 @@ RECEIVER_PRIVATE_KEY_WIF=your_receiver_private_key_wif
 asset-layer1/
 ├── assets_layer1.py      # Main implementation
 ├── generate_keys.py      # Key generation utility
-├── .env                  # Environment variables (create this)
-└── README.md            # This file
+├── .env.example          # Template for the required environment variables
+└── .env                  # Your keys (create from .env.example, git-ignored)
 ```
 
 ## Usage
